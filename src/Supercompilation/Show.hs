@@ -75,3 +75,14 @@ instance Show Name where
 
 instance Show Coercion where
     show _ = "<Coercion>"
+
+
+-- Instance for non-terms related stuff.
+
+deriving instance Show CoreToDo
+deriving instance Show SimplifierMode
+deriving instance Show CompilerPhase
+deriving instance Show FloatOutSwitches
+
+instance Show PluginPass where
+    show _ = "PluginPass"

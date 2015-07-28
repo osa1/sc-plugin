@@ -1,24 +1,22 @@
-{-# LANGUAGE ScopedTypeVariables, TupleSections #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, ScopedTypeVariables, TupleSections #-}
 
 module Supercompilation.Plugin where
 
-import Control.Monad
-import Data.Bifunctor (first, second)
+import qualified Control.Monad.State as S
 import qualified Data.IntMap as IM
+import qualified Data.IntSet as IS
 import Data.IORef
-import Data.List (foldl')
-import qualified Data.Map as M
-import Data.Maybe (mapMaybe)
-import qualified Data.Set as S
+-- import Data.Maybe (fromMaybe)
+-- import Safe (headMay)
 
-import GhcPlugins hiding (parens)
+-- I don't like how GHC doesn't qualify it's module names..
+import CoreSyn
+import CoreMonad
+import DynFlags
+import GhcPlugins hiding (parens, split) -- why is this exporting string functions?
 import Unique (getKey)
 
-import Supercompilation.Annotations
-import Supercompilation.EvalPlugin
 import Supercompilation.Show
-
-import Debug.Trace
 
 --------------------------------------------------------------------------------
 
@@ -26,15 +24,157 @@ plugin :: Plugin
 plugin = trace "running plugin" defaultPlugin { installCoreToDos = coreToDo }
 
 coreToDo :: [CommandLineOption] -> [CoreToDo] -> CoreM [CoreToDo]
-coreToDo _ todos = return (CoreDoPluginPass "symbolic evaluation" evalPluginPass : todos)
--- coreToDo _ todos = return (CoreDoPluginPass "partial evaluation" pePluginPass : todos)
+coreToDo _ todos = do
+    liftIO $ putStrLn $ "TODOs: " ++ show todos
+    injectPlugin (CoreDoPluginPass "supercompile" scPluginPass) todos
+  where
+    -- TODO: We have a problem here: CorePrep is never pushed to the pipeline.
+    -- GHC's doCorePass isn't even handling CorePrep case. It's hard coded just
+    -- before code generation step. It seems like currently there's no way to
+    -- run a plugin pass after CorePrep.
+    injectPlugin p [] = do
+      liftIO $ putStrLn "Can't find CorePrep step in TODOs, injecting plugin as last thing to do."
+      return [p]
+    injectPlugin p (CorePrep : rest) = return (CorePrep : p : rest)
+    injectPlugin p (coreStep : rest) = (coreStep :) <$> injectPlugin p rest
 
 --------------------------------------------------------------------------------
 
-pePluginPass :: ModGuts -> CoreM ModGuts
-pePluginPass guts = do
+scPluginPass :: ModGuts -> CoreM ModGuts
+scPluginPass guts = do
     getDynFlags >>= liftIO . writeIORef dynFlags_ref
+    -- convert to A-normal form
+    -- hscEnv <- getHscEnv
+    -- -- Why is this in IO???
+    -- let modLoc = fromMaybe (panic "scPluginPass: Can't find current module in ModGuts.") $
+    --                findCurrentModuleLoc (hsc_mod_graph hscEnv)
+    -- pgm' <- liftIO $ corePrepPgm hscEnv modLoc (mg_binds guts) (mg_tcs guts)
+
+    -- we should dump our progress here.
+
+    -- return guts{ mg_binds = pgm' }
+    return guts
+  -- where
+  --   findCurrentModuleLoc :: ModuleGraph -> Maybe ModLocation
+  --   findCurrentModuleLoc graph =
+  --     ms_location <$> headMay (filter ((==) (mg_module guts) . ms_mod) graph)
+
+--------------------------------------------------------------------------------
+
+type State  = (Heap, (Tag, QA), Stack)
+type UState = (Heap, CoreExpr , Stack)
+
+type Heap = IM.IntMap (Tag, CoreExpr)
+
+-- NOTE: We may need to use CoreExpr for both cases, and use some smart
+-- constructor functions.
+data QA = -- Question Var | Answer Value
+          Question Var | Answer CoreExpr
+
+type Stack = [StackFrame]
+
+type StackFrame = (Tag, UStackFrame)
+
+data UStackFrame
+  = Update Var Type     -- TODO: Do we really need a Type here?
+  | Supply Var          -- ^ Supply the argument to function value
+  | Instantiate Type    -- ^ Instantiate value
+  | Case [CoreAlt]      -- TODO: Is using CoreAlt here a good idea?
+
+type Tag = Int
+
+data ScpState = ScpState
+  { ssGuts     :: ModGuts
+  , ssDynFlags :: DynFlags
+  }
+
+newtype ScpM a = ScpM { unwrapScpM :: S.State ScpState a }
+  deriving (Functor, Applicative, Monad, S.MonadState ScpState)
+
+instance HasDynFlags ScpM where
+  getDynFlags = S.gets ssDynFlags
+
+--------------------------------------------------------------------------------
+-- * Main routiunes
+
+sc, sc' :: History -> State -> ScpM CoreExpr
+
+sc hist = memo (sc' hist)
+
+sc' hist s =
+  case terminate hist s of
+    Stop           -> split (sc hist ) s
+    Continue hist' -> split (sc hist') (reduce s)
+
+reduce :: State -> State
+reduce = go emptyHistory
+  where
+    go hist s =
+      case terminate hist s of
+        Stop           -> s
+        Continue hist' ->
+          maybe s (go hist' . normalize) $ step s
+
+normalize :: UState -> State
+normalize = undefined
+
+step :: State -> Maybe UState
+step = undefined
+
+split :: Monad m -- an arbitrary monad? really?
+      => (State -> m CoreExpr)
+      -> (State -> m CoreExpr)
+split = undefined
+
+--------------------------------------------------------------------------------
+-- * Termination check
+
+-- TODO: this is isomorphic to Maybe History, if we could switch to that we can
+-- use some nice combinators like `maybe`, `fromMaybe` etc.
+data TermRes = Stop | Continue History
+
+type History = [State]
+
+emptyHistory :: History
+emptyHistory = []
+
+terminate :: History -> State -> TermRes
+terminate prevs here
+  | any (`wqo` here) prevs = Stop
+  | otherwise              = Continue (here : prevs)
+
+wqo :: State -> State -> Bool
+wqo s1 s2 = tagBag s1 `wqo_bag` tagBag s2
+
+type TagBag = [Int]
+
+wqo_bag :: TagBag -> TagBag -> Bool
+wqo_bag s1 s2 = IS.fromList s1 == IS.fromList s2 && length s1 <= length s2
+
+tagBag :: State -> TagBag
+tagBag (heap, (termTag, _), k) = tagBag_heap heap ++ (termTag : tagBag_cont k)
+
+tagBag_heap :: Heap -> TagBag
+tagBag_heap heap = map fst $ IM.elems heap
+
+tagBag_cont :: Stack -> TagBag
+tagBag_cont = map fst
+
+--------------------------------------------------------------------------------
+-- * Memoization
+
+memo :: (State -> ScpM CoreExpr) -> (State -> ScpM CoreExpr)
+memo = undefined
+
+match :: State -> State -> Maybe Subst
+match = undefined
+
+
+{-
+
     anns <- getAnnotations deserializeWithData guts
+
+
 
     let knownVars :: [Name] =
           collectKnownConstructors (mg_tcs guts) ++ collectKnownDefs (mg_binds guts)
@@ -368,6 +508,8 @@ reducePlus im plus [arg1, arg2] =
 
 reducePlus _  _     args = trace ("reducePlus: can't reduce args: " ++ showOutputable args) Nothing
 
+-}
+
 --------------------------------------------------------------------------------
 -- * Utils
 
@@ -382,6 +524,7 @@ coreBindBinder = head . bindersOf
 coreBindBody :: CoreBind -> CoreExpr
 coreBindBody (NonRec _ e)   = e
 coreBindBody (Rec [(_, e)]) = e
+coreBindBody (Rec _)        = panic "coreBindBody: Empty list of bindings or more than one bindings."
 
 lookupInline :: CoreBndr -> IM.IntMap CoreBind -> Maybe CoreBind
 lookupInline b m = IM.lookup (getKey . getUnique $ b) m
