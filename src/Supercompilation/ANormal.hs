@@ -36,6 +36,7 @@ aNormalBind (Rec bs) = Rec <$> mapM aNormalBind' bs
 aNormalBind' :: (CoreBndr, CoreExpr) -> State Unique (CoreBndr, CoreExpr)
 aNormalBind' (b, e) = (b,) <$> aNormal e
 
+-- TODO: Complete implementation.
 aNormal :: CoreExpr -> State Unique CoreExpr
 aNormal e@Var{} = return e
 aNormal e@Lit{} = return e

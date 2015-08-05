@@ -61,10 +61,8 @@ scPluginPass guts = do
 
     -- return guts{ mg_binds = pgm' }
 
-    -- A-normalization should preserve semantics:
-    let anf = aNormalPgm (mg_binds guts)
     -- Try tagging and untagging
-    let tag = tagPgm anf
+    let tag = tagPgm (mg_binds guts)
         untag = untagPgm tag
 
     return guts{ mg_binds = untag }
