@@ -22,6 +22,9 @@ import Var
 
 -- TODO: We generate prefixed names but we don't guarantee that there won't be
 -- shadowing/capturing.
+-- This may be a simple solution: Some names are not allowed to be used by users
+-- but GHC can still generate those, like $d prefixed dictionary names. Maybe we
+-- can use something like $a for A-normal form transformation generated names.
 
 aNormalPgm :: CoreProgram -> CoreProgram
 aNormalPgm pgm = evalState (mapM aNormalBind pgm) (mkVarOccUnique $ mkFastString "an_")
@@ -43,9 +46,9 @@ aNormal (App f arg) = do
 aNormal (Lam arg body) = Lam arg <$> aNormal body
 aNormal (Let bs body) = Let <$> aNormalBind bs <*> aNormal body
 aNormal (Case e b t alts) = do
-  e' <- aNormal e
-  alts' <- mapM aNormalAlt alts
-  return $ Case e' b t alts'
+    e' <- aNormal e
+    alts' <- mapM aNormalAlt alts
+    return $ Case e' b t alts'
 aNormal (Cast e c) = flip Cast c <$> aNormal e
 aNormal (Tick t e) = Tick t <$> aNormal e
 aNormal t@Type{} = return t
