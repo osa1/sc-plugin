@@ -18,7 +18,7 @@ import Unique (getKey)
 
 import Supercompilation.ANormal
 import Supercompilation.Show
--- import Supercompilation.TaggedExpr
+import Supercompilation.TaggedExpr (tagPgm, untagPgm, Tag)
 
 --------------------------------------------------------------------------------
 
@@ -28,17 +28,22 @@ plugin = trace "running plugin" defaultPlugin { installCoreToDos = coreToDo }
 coreToDo :: [CommandLineOption] -> [CoreToDo] -> CoreM [CoreToDo]
 coreToDo _ todos = do
     liftIO $ putStrLn $ "TODOs: " ++ show todos
-    injectPlugin (CoreDoPluginPass "supercompile" scPluginPass) todos
+    -- TODO: Our transformations causing a panic in coreToStgExpr if we in run
+    -- the pass as last thing to do. We should probably find a sweet-spot where
+    -- we have nicely prepared CoreProgram and our passes don't invalidate GHC's
+    -- invariants.
+    -- injectPlugin (CoreDoPluginPass "supercompile" scPluginPass) todos
+    return $ CoreDoPluginPass "supercompile" scPluginPass : todos
   where
     -- TODO: We have a problem here: CorePrep is never pushed to the pipeline.
     -- GHC's doCorePass isn't even handling CorePrep case. It's hard coded just
     -- before code generation step. It seems like currently there's no way to
     -- run a plugin pass after CorePrep.
-    injectPlugin p [] = do
-      liftIO $ putStrLn "Can't find CorePrep step in TODOs, injecting plugin as last thing to do."
-      return [p]
-    injectPlugin p (CorePrep : rest) = return (CorePrep : p : rest)
-    injectPlugin p (coreStep : rest) = (coreStep :) <$> injectPlugin p rest
+    -- injectPlugin p [] = do
+    --   liftIO $ putStrLn "Can't find CorePrep step in TODOs, injecting plugin as last thing to do."
+    --   return [p]
+    -- injectPlugin p (CorePrep : rest) = return (CorePrep : p : rest)
+    -- injectPlugin p (coreStep : rest) = (coreStep :) <$> injectPlugin p rest
 
 --------------------------------------------------------------------------------
 
@@ -57,7 +62,12 @@ scPluginPass guts = do
     -- return guts{ mg_binds = pgm' }
 
     -- A-normalization should preserve semantics:
-    return guts{ mg_binds = aNormalPgm (mg_binds guts) }
+    let anf = aNormalPgm (mg_binds guts)
+    -- Try tagging and untagging
+    let tag = tagPgm anf
+        untag = untagPgm tag
+
+    return guts{ mg_binds = untag }
   -- where
   --   findCurrentModuleLoc :: ModuleGraph -> Maybe ModLocation
   --   findCurrentModuleLoc graph =
@@ -84,8 +94,6 @@ data UStackFrame
   | Supply Var          -- ^ Supply the argument to function value
   | Instantiate Type    -- ^ Instantiate value
   | Case [CoreAlt]      -- TODO: Is using CoreAlt here a good idea?
-
-type Tag = Int
 
 data ScpState = ScpState
   { ssGuts     :: ModGuts
@@ -172,7 +180,6 @@ memo = undefined
 
 match :: State -> State -> Maybe Subst
 match = undefined
-
 
 {-
 
