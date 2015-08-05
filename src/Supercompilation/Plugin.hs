@@ -10,13 +10,15 @@ import Data.IORef
 -- import Safe (headMay)
 
 -- I don't like how GHC doesn't qualify it's module names..
-import CoreSyn
 import CoreMonad
+import CoreSyn
 import DynFlags
-import GhcPlugins hiding (parens, split) -- why is this exporting string functions?
+import GhcPlugins hiding (parens, split)
 import Unique (getKey)
 
+import Supercompilation.ANormal
 import Supercompilation.Show
+-- import Supercompilation.TaggedExpr
 
 --------------------------------------------------------------------------------
 
@@ -53,7 +55,9 @@ scPluginPass guts = do
     -- we should dump our progress here.
 
     -- return guts{ mg_binds = pgm' }
-    return guts
+
+    -- A-normalization should preserve semantics:
+    return guts{ mg_binds = aNormalPgm (mg_binds guts) }
   -- where
   --   findCurrentModuleLoc :: ModuleGraph -> Maybe ModLocation
   --   findCurrentModuleLoc graph =

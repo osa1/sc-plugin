@@ -14,7 +14,10 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:
+    Supercompilation.ANormal
+    Supercompilation.Normalize
     Supercompilation.Plugin
+    Supercompilation.TaggedExpr
 
   other-modules:
     Supercompilation.Show
@@ -26,7 +29,7 @@ library
     containers,
     ghc         >=7.10 && <7.12,
     hermit      >=1.0.0.0 && <1.1,
-    -- kure,
+    kure,
     mtl,
     safe
 
