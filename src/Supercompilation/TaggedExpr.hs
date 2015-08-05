@@ -21,6 +21,11 @@ type CoreBind t    = Bind CoreBndr t
 type CoreExpr t    = Expr CoreBndr t
 type CoreAlt t     = Alt CoreBndr t
 
+type TaggedCoreProgram = CoreProgram Tag
+type TaggedCoreBind    = CoreBind Tag
+type TaggedCoreExpr    = CoreExpr Tag
+type TaggedCoreAlt     = CoreAlt Tag
+
 -- TODO: Do I need to tag types and coercions?
 
 data Expr b t
@@ -47,17 +52,17 @@ type Alt b t = (GHC.AltCon, [b], Expr b t)
 
 type Tag = Int
 
-tagPgm :: GHC.CoreProgram -> CoreProgram Tag
+tagPgm :: GHC.CoreProgram -> TaggedCoreProgram
 tagPgm pgm = evalState (mapM tagBind pgm) 0
 
-tagBind :: GHC.CoreBind -> State Tag (CoreBind Tag)
+tagBind :: GHC.CoreBind -> State Tag TaggedCoreBind
 tagBind (GHC.NonRec b e) = NonRec b <$> tagExpr e
 tagBind (GHC.Rec bs)     = Rec <$> mapM tagBind' bs
 
-tagBind' :: (GHC.CoreBndr, GHC.CoreExpr) -> State Tag (CoreBndr, CoreExpr Tag)
+tagBind' :: (GHC.CoreBndr, GHC.CoreExpr) -> State Tag (CoreBndr, TaggedCoreExpr)
 tagBind' (b, e) = (b,) <$> tagExpr e
 
-tagExpr :: GHC.CoreExpr -> State Tag (CoreExpr Tag)
+tagExpr :: GHC.CoreExpr -> State Tag TaggedCoreExpr
 tagExpr (GHC.Var v)         =
     freshTag >>= \t -> return (Var t v)
 tagExpr (GHC.Lit lit)       =
@@ -79,7 +84,7 @@ tagExpr (GHC.Type ty)       =
 tagExpr (GHC.Coercion c)    =
     flip Coercion c <$> freshTag
 
-tagAlt :: GHC.CoreAlt -> State Tag (CoreAlt Tag)
+tagAlt :: GHC.CoreAlt -> State Tag TaggedCoreAlt
 tagAlt (con, bs, e) = (con, bs,) <$> tagExpr e
 
 freshTag :: State Tag Tag
