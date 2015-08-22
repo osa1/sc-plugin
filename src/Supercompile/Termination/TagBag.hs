@@ -22,7 +22,8 @@ import Data.Char
 import qualified Data.Foldable as Foldable
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
-import GHC.Types (Char (..), Int (..), indexCharOffAddr#)
+import GHC.Prim (indexCharOffAddr#)
+import GHC.Types (Char (..), Int (..))
 
 
 newtype TagBag = TagBag { unTagBag :: FinMap Nat }
@@ -96,4 +97,3 @@ iToBase62 n_
     {-# INLINE chooseChar62 #-}
     chooseChar62 (I# n) = C# (indexCharOffAddr# chars62 n)
     chars62 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"#
-
