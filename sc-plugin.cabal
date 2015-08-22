@@ -52,6 +52,7 @@ library
     containers,
     directory,
     ghc         >=7.10 && <7.12,
+    ghc-prim,
     mtl,
     process,
     safe,

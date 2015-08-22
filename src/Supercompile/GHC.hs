@@ -30,6 +30,8 @@ import qualified Supercompile.Core.Syntax as S
 import qualified Supercompile.Evaluator.Syntax as S
 import Supercompile.Utilities
 
+import Supercompilation.Show (dynFlags)
+
 import Coercion (Coercion, isCoVar, isCoVarType, mkAxInstCo, mkCoVarCo)
 import CoreSyn
 import CoreUnfold
@@ -109,7 +111,7 @@ runParseM us = uncurry (S.bindManyMixedLiftedness S.termFreeVars) . runParseM' u
 freshFloatId :: String -> (CoreExpr, S.Term) -> ParseM (Maybe (Var, S.Term), Var)
 freshFloatId _ (_, I (S.Var x)) = return (Nothing, x)
 freshFloatId n (old_e, e)       =
-    fmap (\x -> let x' = x `setIdUnfolding` mkUnfolding InlineRhs False (isBottomingId x) old_e in (Just (x', e), x')) $ mkSysLocalM (mkFastString n) (S.termType e)
+    fmap (\x -> let x' = x `setIdUnfolding` mkUnfolding dynFlags InlineRhs False (isBottomingId x) old_e in (Just (x', e), x')) $ mkSysLocalM (mkFastString n) (S.termType e)
     -- NB: we are careful to give fresh binders an unfolding so that the
     -- evaluator can use GHC's inlining heuristics to decide whether it is
     -- profitable to inline the RHS.

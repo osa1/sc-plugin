@@ -1,17 +1,19 @@
-{-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE BangPatterns, CPP, MagicHash, Rank2Types #-}
 
 module Supercompile.Termination.TagBag (
         embedWithTagBags,
         TagBag, tagBagTagSet, stateTags
     ) where
 
+#include "GHCDefs.h"
+
 import Supercompile.Termination.Combinators
 import Supercompile.Termination.Generaliser
 
 import Supercompile.Evaluator.Syntax
 
+import Supercompile.StaticFlags (TagBagType (..))
 import Supercompile.Utilities
-import Supercompile.StaticFlags (TagBagType(..))
 
 import Unique (mkUniqueGrimily, unpkUnique)
 import Util
@@ -20,6 +22,7 @@ import Data.Char
 import qualified Data.Foldable as Foldable
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
+import GHC.Types (Char (..), Int (..), indexCharOffAddr#)
 
 
 newtype TagBag = TagBag { unTagBag :: FinMap Nat }

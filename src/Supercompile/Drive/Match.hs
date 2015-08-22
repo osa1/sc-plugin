@@ -1,4 +1,5 @@
-{-# LANGUAGE CPP, GeneralizedNewtypeDeriving, Rank2Types #-}
+{-# LANGUAGE CPP, GeneralizedNewtypeDeriving, Rank2Types, ScopedTypeVariables
+             #-}
 
 module Supercompile.Drive.Match (
     MatchMode(..), InstanceMatching(..),
@@ -19,6 +20,8 @@ import Supercompile.Utilities hiding (guard)
 
 import qualified CoreSyn as Core
 
+import Supercompilation.Show (dynFlags)
+
 import Coercion
 import Id (Id, idSpecialisation, idType, realIdUnfolding, zapFragileIdInfo)
 import IdInfo (SpecInfo (..), emptySpecInfo)
@@ -36,7 +39,7 @@ import qualified Data.Map as M
 pprTraceSC :: String -> SDoc -> a -> a
 --pprTraceSC _ _ = id
 --pprTraceSC = pprTrace
-pprTraceSC msg doc a = traceSC (msg ++ ": " ++ showSDoc doc) a
+pprTraceSC msg doc a = traceSC (msg ++ ": " ++ showSDoc dynFlags doc) a
 
 traceSC :: String -> a -> a
 traceSC _ = id
@@ -182,12 +185,13 @@ matchType _ _ _ = fail "matchType"
 
 -- TODO: match coercion instantiation?
 matchCoercion :: RnEnv2 -> Coercion -> Coercion -> Match [MatchLR]
-matchCoercion rn2 (Refl ty_l)              (Refl ty_r)              = matchType rn2 (ty_l) (ty_r)
-matchCoercion rn2 (TyConAppCo tc_l cos_l)  (TyConAppCo tc_r cos_r)  = guard "matchCoercion: TyConAppCo" (tc_l == tc_r) >> matchList (matchCoercion rn2) (cos_l) (cos_r)
+-- FIXME(osa1): Ignoring Roles here. Need to read about roles.
+matchCoercion rn2 (Refl _ ty_l)            (Refl _ ty_r)            = matchType rn2 (ty_l) (ty_r)
+matchCoercion rn2 (TyConAppCo _ tc_l cos_l)  (TyConAppCo _ tc_r cos_r)  = guard "matchCoercion: TyConAppCo" (tc_l == tc_r) >> matchList (matchCoercion rn2) (cos_l) (cos_r)
 matchCoercion rn2 (AppCo co1_l co2_l)      (AppCo co1_r co2_r)      = liftM2 (++) (matchCoercion rn2 (co1_l) (co1_r)) (matchCoercion rn2 (co2_l) (co2_r))
 matchCoercion rn2 (ForAllCo a_l co_l)      (ForAllCo a_r co_r)      = matchTyVarBndr rn2 a_l a_r $ \rn2 -> matchCoercion rn2 co_l co_r
 matchCoercion rn2 (CoVarCo a_l)            (CoVarCo a_r)            = matchVar rn2 a_l a_r
-matchCoercion rn2 (AxiomInstCo ax_l cos_l) (AxiomInstCo ax_r cos_r) = guard "matchCoercion: AxiomInstCo" (ax_l == ax_r) >> matchList (matchCoercion rn2) (cos_l) (cos_r)
+matchCoercion rn2 (AxiomInstCo _ ax_l cos_l) (AxiomInstCo _ ax_r cos_r) = guard "matchCoercion: AxiomInstCo" (ax_l == ax_r) >> matchList (matchCoercion rn2) (cos_l) (cos_r)
 -- NOTE(osa1): Seems like this constructor is removed, commenting out.
 -- matchCoercion rn2 (UnsafeCo ty1_l ty2_l)   (UnsafeCo ty1_r ty2_r)   = liftM2 (++) (matchType rn2 (ty1_l) (ty1_r)) (matchType rn2 (ty2_l) (ty2_r))
 matchCoercion rn2 (SymCo co_l)             (SymCo co_r)             = matchCoercion rn2 (co_l) (co_r)
@@ -592,7 +596,7 @@ matchPureHeap mm rn2 k_inst init_free_eqs h_l (Heap h_r ids_r)
                   Just extra_xys             -> return extra_xys
                   Nothing                    -> failLoop "cannot match VarR non-internally"
                 matchLoop (lr : known) heap_inst (extra_xys ++ xys) (bndr_free_eqs ++ extra_free_eqs ++ free_eqs) used_l' used_r'
-            failLoop rest = fail $ "matchLoop: " ++ showPpr lr ++ ": " ++ rest
+            failLoop rest = fail $ "matchLoop: " ++ showPpr dynFlags lr ++ ": " ++ rest
 
     -- First Maybe: whether or not the var is bound in the heap
     -- Second Maybe: whether or not the HeapBinding actually has a term
@@ -626,7 +630,7 @@ matchPureHeap mm rn2 k_inst init_free_eqs h_l (Heap h_r ids_r)
         (hb_meaning, used_r, fvs_r) <- case mb_er' of
           Left mb_tg                   -> return (Left mb_tg,               used_r,  emptyVarSet)
           Right (Just (used_r', e_r')) -> return (Right (renamedTerm e_r'), used_r', annedTermFreeVars e_r')
-          Right Nothing                -> fail $ "instLoop(" ++ showPpr x_r ++ "): right side already used in instance match"
+          Right Nothing                -> fail $ "instLoop(" ++ showPpr dynFlags x_r ++ "): right side already used in instance match"
 
         -- Transitively add the free variables of the copied bindings
         fvsInstLoop (M.insert x_r (HB how_r hb_meaning) h_inst) used_r (fvs_r `unionVarSet` varBndrFreeVars x_r)
@@ -636,10 +640,10 @@ matchPureHeap mm rn2 k_inst init_free_eqs h_l (Heap h_r ids_r)
       = foldM (\(h_inst, used_r) y_r -> case rnOccR_maybe rn2 y_r of
                                           Just _
                                             | y_r `elemVarSet` k_inst_bvs -> return (h_inst, used_r) -- In the instantiating stack: no heap copying required
-                                            | otherwise                   -> fail $ "fvsInstLoop(" ++ showPpr y_r ++ "): heap instance reference to non-instantiating stack"
+                                            | otherwise                   -> fail $ "fvsInstLoop(" ++ showPpr dynFlags y_r ++ "): heap instance reference to non-instantiating stack"
                                           Nothing -> case lookupUsed used_r y_r h_r of -- Bound by the heap: must copy something
                                             Just (how_r, mb_er') -> instLoop h_inst y_r how_r used_r mb_er'
-                                            Nothing              -> fail $ "fvsInstLoop(" ++ showPpr y_r ++ "): right heap binding not present")
+                                            Nothing              -> fail $ "fvsInstLoop(" ++ showPpr dynFlags y_r ++ "): right heap binding not present")
               (h_inst, used_r) (varSetElems fvs)
 
 app3 :: [a] -> [a] -> [a] -> [a]
