@@ -9,15 +9,38 @@ maintainer:          omeragacan@gmail.com
 -- copyright:
 -- category:
 build-type:          Simple
--- extra-source-files:
+extra-source-files:  include/GHCDefs.h
 cabal-version:       >=1.10
 
 library
   exposed-modules:
     Supercompilation.ANormal
+    Supercompilation.Context
     Supercompilation.Normalize
     Supercompilation.Plugin
     Supercompilation.TaggedExpr
+
+    Supercompile.Core.FreeVars
+    Supercompile.Core.Renaming
+    Supercompile.Core.Size
+    Supercompile.Core.Syntax
+    Supercompile.Core.Tag
+    Supercompile.Drive.Match
+    Supercompile.Drive.Process
+    Supercompile.Drive.Split
+    Supercompile.Evaluator.Deeds
+    Supercompile.Evaluator.Evaluate
+    Supercompile.Evaluator.FreeVars
+    Supercompile.Evaluator.Residualise
+    Supercompile.Evaluator.Syntax
+    Supercompile.StaticFlags
+    Supercompile.Termination.Combinators
+    Supercompile.Termination.Generaliser
+    Supercompile.Termination.TagBag
+    Supercompile.Utilities
+    Supercompile.Supercompile
+
+  include-dirs: include
 
   other-modules:
     Supercompilation.Show
@@ -27,11 +50,12 @@ library
   build-depends:
     base        >=4.8 && <4.9,
     containers,
+    directory,
     ghc         >=7.10 && <7.12,
-    hermit      >=1.0.0.0 && <1.1,
-    kure,
     mtl,
-    safe
+    process,
+    safe,
+    xhtml
 
   hs-source-dirs:      src
   default-language:    Haskell2010

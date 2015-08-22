@@ -2,7 +2,6 @@
 
 module Supercompilation.Plugin where
 
-import qualified Control.Monad.State as S
 import qualified Data.IntMap as IM
 import qualified Data.IntSet as IS
 import Data.IORef
@@ -12,13 +11,14 @@ import Data.IORef
 -- I don't like how GHC doesn't qualify it's module names..
 import CoreMonad
 import CoreSyn
-import DynFlags
 import GhcPlugins hiding (parens, split)
 import Unique (getKey)
 
-import Supercompilation.ANormal
+-- import Supercompilation.ANormal
+import Supercompilation.Context
+import Supercompilation.Normalize
 import Supercompilation.Show
-import Supercompilation.TaggedExpr (tagPgm, untagPgm, Tag)
+import Supercompilation.TaggedExpr (tagPgm, untagPgm)
 
 --------------------------------------------------------------------------------
 
@@ -65,44 +65,13 @@ scPluginPass guts = do
     let tag = tagPgm (mg_binds guts)
         untag = untagPgm tag
 
+    liftIO $ print untag
+
     return guts{ mg_binds = untag }
   -- where
   --   findCurrentModuleLoc :: ModuleGraph -> Maybe ModLocation
   --   findCurrentModuleLoc graph =
   --     ms_location <$> headMay (filter ((==) (mg_module guts) . ms_mod) graph)
-
---------------------------------------------------------------------------------
-
-type State  = (Heap, (Tag, QA), Stack)
-type UState = (Heap, CoreExpr , Stack)
-
-type Heap = IM.IntMap (Tag, CoreExpr)
-
--- NOTE: We may need to use CoreExpr for both cases, and use some smart
--- constructor functions.
-data QA = -- Question Var | Answer Value
-          Question Var | Answer CoreExpr
-
-type Stack = [StackFrame]
-
-type StackFrame = (Tag, UStackFrame)
-
-data UStackFrame
-  = Update Var Type     -- TODO: Do we really need a Type here?
-  | Supply Var          -- ^ Supply the argument to function value
-  | Instantiate Type    -- ^ Instantiate value
-  | Case [CoreAlt]      -- TODO: Is using CoreAlt here a good idea?
-
-data ScpState = ScpState
-  { ssGuts     :: ModGuts
-  , ssDynFlags :: DynFlags
-  }
-
-newtype ScpM a = ScpM { unwrapScpM :: S.State ScpState a }
-  deriving (Functor, Applicative, Monad, S.MonadState ScpState)
-
-instance HasDynFlags ScpM where
-  getDynFlags = S.gets ssDynFlags
 
 --------------------------------------------------------------------------------
 -- * Main routiunes
@@ -124,9 +93,6 @@ reduce = go emptyHistory
         Stop           -> s
         Continue hist' ->
           maybe s (go hist' . normalize) $ step s
-
-normalize :: UState -> State
-normalize = undefined
 
 step :: State -> Maybe UState
 step = undefined
@@ -162,10 +128,12 @@ wqo_bag :: TagBag -> TagBag -> Bool
 wqo_bag s1 s2 = IS.fromList s1 == IS.fromList s2 && length s1 <= length s2
 
 tagBag :: State -> TagBag
-tagBag (heap, (termTag, _), k) = tagBag_heap heap ++ (termTag : tagBag_cont k)
+tagBag = undefined
+-- tagBag (heap, (termTag, _), k) = tagBag_heap heap ++ (termTag : tagBag_cont k)
 
 tagBag_heap :: Heap -> TagBag
-tagBag_heap heap = map fst $ IM.elems heap
+tagBag_heap = undefined
+-- tagBag_heap heap = map fst $ IM.elems heap
 
 tagBag_cont :: Stack -> TagBag
 tagBag_cont = map fst

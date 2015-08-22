@@ -1,4 +1,5 @@
-{-# LANGUAGE FlexibleInstances, StandaloneDeriving, TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances, MultiWayIf, StandaloneDeriving,
+             TypeSynonymInstances #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
@@ -16,10 +17,16 @@
 module Supercompilation.Show where
 
 import Data.IORef
+import Data.List (intercalate)
 import System.IO.Unsafe (unsafePerformIO)
 
+import Class
 import CostCentre
+import ForeignCall
+import Demand
 import GhcPlugins
+import IdInfo
+import PrimOp
 import TypeRep
 
 --------------------------------------------------------------------------------
@@ -52,8 +59,67 @@ deriving instance Show Role
 deriving instance Show LeftOrRight
 deriving instance Show IsCafCC
 
+instance Show Class where
+  show _ = "<Class>"
+
+deriving instance Show IdDetails
+deriving instance Show PrimOp
+deriving instance Show ForeignCall
+deriving instance Show TickBoxOp
+deriving instance Show PrimOpVecCat
+deriving instance Show CCallSpec
+deriving instance Show CCallTarget
+deriving instance Show CCallConv
+deriving instance Show SpecInfo
+deriving instance Show OccInfo
+deriving instance Show InlinePragma
+deriving instance Show OneShotInfo
+deriving instance Show CafInfo
+deriving instance Show Unfolding
+deriving instance Show UnfoldingSource
+deriving instance Show UnfoldingGuidance
+deriving instance Show Activation
+deriving instance Show CoreRule
+deriving instance Show IsOrphan
+deriving instance Show StrictSig
+deriving instance Show DmdType
+
+instance Show RuleFun where
+  show _ = "<RuleFun>"
+
+instance Show (UniqFM a) where
+  show _ = "<UniqFM>"
+
+instance Show IdInfo where
+  show info =
+      "Info{" ++ intercalate "," [show arityInfo_, show specInfo_, show unfoldingInfo_,
+                                  show cafInfo_, show oneShotInfo_, show inlinePragInfo_,
+                                  show occInfo_, show strictnessInfo_, show demandInfo_,
+                                  show callArityInfo_] ++ "}"
+    where
+      arityInfo_ = arityInfo info
+      specInfo_  = specInfo info
+      unfoldingInfo_ = unfoldingInfo info
+      cafInfo_   = cafInfo info
+      oneShotInfo_ = oneShotInfo info
+      inlinePragInfo_ = inlinePragInfo info
+      occInfo_ = occInfo info
+      strictnessInfo_ = strictnessInfo info
+      demandInfo_ = demandInfo info
+      callArityInfo_ = callArityInfo info
+
 instance Show Var where
-    show = show . varName
+    show v =
+      if | isId v ->
+           let details = idDetails v
+               info    = idInfo v
+            in "Id{" ++ intercalate "," [show name, show uniq, show ty, show details, show info] ++ "}"
+         | isTyVar v -> "TyVar{" ++ show name ++ "}"
+         | otherwise -> "TcTyVar{" ++ show name ++ "}"
+      where
+        name = varName v
+        uniq = varUnique v
+        ty   = varType v
 
 instance Show DataCon where
     show = show . dataConName
@@ -71,7 +137,8 @@ instance Show Name where
     show = showOutputable . nameOccName
 
 -- deriving instance Show Name
--- deriving instance Show OccName
+instance Show OccName where
+    show = showOutputable
 
 instance Show Coercion where
     show _ = "<Coercion>"

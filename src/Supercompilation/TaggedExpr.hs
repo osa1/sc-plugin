@@ -8,10 +8,12 @@ import Control.Monad.State
 import Data.Bifunctor (second)
 
 import qualified Coercion as GHC
+import qualified CoreFVs as GHC
 import qualified CoreSyn as GHC
 import qualified Literal as GHC
 import qualified TypeRep as GHC
 import qualified Var as GHC
+import qualified VarSet as GHC
 
 --------------------------------------------------------------------------------
 
@@ -117,3 +119,76 @@ untagExpr (Coercion _ c) = GHC.Coercion c
 
 untagAlt :: CoreAlt t -> GHC.CoreAlt
 untagAlt (con, bs, e) = (con, bs, untagExpr e)
+
+--------------------------------------------------------------------------------
+-- * Extracting tags from terms
+
+exprTag :: TaggedCoreExpr -> Tag
+exprTag (Var t _) = t
+exprTag (Lit t _) = t
+exprTag (App t _ _) = t
+exprTag (Lam t _ _) = t
+exprTag (Let t _ _) = t
+exprTag (Case t _ _ _ _) = t
+exprTag (Cast t _ _) = t
+exprTag (Tick t _ _) = t
+exprTag (Type t _) = t
+exprTag (Coercion t _) = t
+
+--------------------------------------------------------------------------------
+-- * Free variables in tagged Core expressions
+
+-- |
+-- TODO: This code is adapted from HERMIT, make a note of this somewhere.
+--       (also has some parts from GHC)
+freeVarsExpr :: CoreExpr t -> GHC.VarSet
+freeVarsExpr (Var _ v) = GHC.extendVarSet (freeVarsVar v) v
+freeVarsExpr Lit{} = GHC.emptyVarSet
+freeVarsExpr (App _ e1 e2) = freeVarsExpr e1 `GHC.unionVarSet` freeVarsExpr e2
+freeVarsExpr (Lam _ b e) = GHC.delVarSet (freeVarsExpr e) b
+freeVarsExpr (Let _ b e) =
+    freeVarsBind b `GHC.unionVarSet` GHC.delVarSetList (freeVarsExpr e) (GHC.bindersOf $ untagBind b)
+freeVarsExpr (Case _ s b ty alts) =
+    let altFVs = GHC.delVarSet (GHC.unionVarSets $ map freeVarsAlt alts) b
+     in GHC.unionVarSets [freeVarsExpr s, freeVarsType ty, altFVs]
+freeVarsExpr (Cast _ e co) = freeVarsExpr e `GHC.unionVarSet` freeVarsCoercion co
+freeVarsExpr (Tick _ t e) = freeVarsTick t `GHC.unionVarSet` freeVarsExpr e
+freeVarsExpr (Type _ ty) = freeVarsType ty
+freeVarsExpr (Coercion _ co) = freeVarsCoercion co
+
+freeVarsAlt :: CoreAlt t -> GHC.VarSet
+freeVarsAlt (_, bs, e) =
+    GHC.delVarSetList (freeVarsExpr e `GHC.unionVarSet` GHC.unionVarSets (map freeVarsVar bs)) bs
+
+freeVarsCoercion :: GHC.Coercion -> GHC.VarSet
+freeVarsCoercion = GHC.tyCoVarsOfCo
+
+freeVarsType :: GHC.Type -> GHC.TyVarSet
+freeVarsType = GHC.tyVarsOfType
+
+freeVarsVar :: GHC.Var -> GHC.VarSet
+freeVarsVar v = GHC.varTypeTyVars v `GHC.unionVarSet` bndrRuleAndUnfoldingVars
+  where
+    -- This function is copied from GHC, which defines but doesn't expose it.
+    --
+    -- A 'let' can bind a type variable, and idRuleVars assumes it's seeing an
+    -- Id. This function tests first.
+    bndrRuleAndUnfoldingVars :: GHC.VarSet
+    bndrRuleAndUnfoldingVars
+      | GHC.isTyVar v = GHC.emptyVarSet
+      | otherwise     = GHC.idRuleAndUnfoldingVars v
+
+freeVarsBind :: CoreBind t -> GHC.VarSet
+freeVarsBind (NonRec v e) = freeVarsExpr e `GHC.unionVarSet` freeVarsVar v
+freeVarsBind (Rec defs)   =
+    let (bs, es) = unzip defs
+     in GHC.delVarSetList (GHC.unionVarSets (map freeVarsVar bs ++ map freeVarsExpr es)) bs
+
+freeVarsTick :: GHC.Tickish GHC.Id -> GHC.VarSet
+freeVarsTick (GHC.Breakpoint _ ids) = GHC.mkVarSet ids
+freeVarsTick _ = GHC.emptyVarSet
+
+--------------------------------------------------------------------------------
+-- * Capture avoiding substitutions
+
+
