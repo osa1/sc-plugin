@@ -41,12 +41,6 @@ mkSymCo iss co = optCoercion (mkCvSubst iss []) (Coercion.mkSymCo co)
 mkTransCo :: InScopeSet -> NormalCo -> NormalCo -> NormalCo
 mkTransCo = opt_trans
 
-mkNthCo :: Int -> NormalCo -> NormalCo
-mkNthCo = opt_nth
-
-mkInstCo :: InScopeSet -> NormalCo -> Type -> NormalCo
-mkInstCo = opt_inst
-
 class Outputable a => OutputableLambdas a where
     pprPrecLam :: a -> ([Var], Rational -> SDoc)
 

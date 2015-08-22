@@ -1,3 +1,5 @@
+{-# LANGUAGE Rank2Types #-}
+
 module Supercompile.Termination.TagBag (
         embedWithTagBags,
         TagBag, tagBagTagSet, stateTags
@@ -34,14 +36,14 @@ pPrintTag n = (try 'h' 5 `mplus` try 'k' 3 `mplus` try 'q' 2 `mplus` uniq '?' n)
   where try w divisor = do
           (q, 0) <- return $ n `quotRem` divisor
           uniq w q
-        
+
         uniq w m
           | 64 < ord_c && ord_c < 128 = Just $ char w <> ppr u
           | otherwise                 = Nothing
           where u = mkUniqueGrimily m
                 (c, _) = unpkUnique u
                 ord_c = ord c
-        
+
         nat w m | m < 0     = char w <> char '-' <> text (iToBase62 (negate m))
                 | otherwise = char w <>             text (iToBase62 m)
 
@@ -62,15 +64,33 @@ stateTags (_, Heap h _, k, qa) = -- traceRender ("stateTags (TagBag)", M.map hea
   where
     heapBindingTagBag :: HeapBinding -> FinMap Nat -> FinMap Nat
     heapBindingTagBag = maybe id (singletonTagBag . pureHeapBindingTag') . heapBindingTag
-      
+
     pureHeapTagBag :: PureHeap -> FinMap Nat -> FinMap Nat
     pureHeapTagBag = flip $ M.fold heapBindingTagBag -- NB: really a foldr, but the M.foldr synonym was added in a later version of containers
- 
+
     stackTagBag :: Stack -> FinMap Nat -> FinMap Nat
     stackTagBag = flip $ trainCarFoldr stackFrameTagBag
 
     stackFrameTagBag :: Tagged StackFrame -> FinMap Nat -> FinMap Nat
     stackFrameTagBag = singletonTagBag . stackFrameTag'
- 
+
     singletonTagBag :: Tag -> FinMap Nat -> FinMap Nat
     singletonTagBag (TG i occs) = IM.insert (unFin i) occs
+
+
+-- NOTE(osa1): Copied from GHC's Unique
+iToBase62 :: Int -> String
+iToBase62 n_
+  = ASSERT(n_ >= 0) go n_ ""
+  where
+    go n cs | n < 62
+            = let !c = chooseChar62 n in c : cs
+            | otherwise
+            = go q (c : cs) where (q, r) = quotRem n 62
+                                  !c = chooseChar62 r
+
+    chooseChar62 :: Int -> Char
+    {-# INLINE chooseChar62 #-}
+    chooseChar62 (I# n) = C# (indexCharOffAddr# chars62 n)
+    chars62 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"#
+

@@ -1,4 +1,4 @@
-{-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE FlexibleInstances, Rank2Types #-}
 {-# OPTIONS_GHC -fno-warn-missing-signatures #-}
 module Supercompile.Core.Size where
 
@@ -45,7 +45,7 @@ mkSize rec = (term, term', alternatives, value, value')
         Let _ e1 e2     -> term e1 + term e2
         LetRec xes e    -> sum (map (term . snd) xes) + term e
         Cast e _        -> term e
-    
+
     value = rec value'
     value' v = 1 + case v of
         TyLambda _ e -> term e
@@ -53,11 +53,10 @@ mkSize rec = (term, term', alternatives, value, value')
         Data _ _ _ _ -> 0
         Literal _    -> 0
         Coercion _   -> 0
-    
-    alternatives = sum . map alternative
-    
-    alternative = term . snd
 
+    alternatives = sum . map alternative
+
+    alternative = term . snd
 
 instance Symantics (O Sized FVed) where
     var = sizedFVedTerm . Var

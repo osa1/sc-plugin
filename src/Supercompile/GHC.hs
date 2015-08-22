@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveFunctor #-}
+
 module Supercompile.GHC where
 
 -- FIXME: I need to document the basis on which I push down unlifted heap
@@ -76,15 +78,23 @@ desc' (S.LetRec _ e)       = desc e
 argOf :: Description -> Description
 argOf = ArgumentOf
 
-
 newtype ParseM a = ParseM { unParseM :: UniqSupply -> (UniqSupply, [(Var, S.Term)], a) }
+    deriving (Functor)
 
-instance Functor ParseM where
-    fmap = liftM
+instance Applicative ParseM where
+    pure x = ParseM $ \s -> (s, [], x)
+    ParseM f <*> ParseM a =
+      ParseM $ \s ->
+        let (s',  floats1, arg) = a s
+            (s'', floats2, fun) = f s'
+         in (s'', floats1 ++ floats2, fun arg)
 
 instance Monad ParseM where
-    return x = ParseM $ \s -> (s, [], x)
-    mx >>= fxmy = ParseM $ \s -> case unParseM mx s of (s, floats1, x) -> case unParseM (fxmy x) s of (s, floats2, y) -> (s, floats1 ++ floats2, y)
+    ParseM mx >>= fxmy =
+      ParseM $ \s ->
+        let (s', floats1, x) = mx s
+            (s'', floats2, y) = unParseM (fxmy x) s'
+         in (s'', floats1 ++ floats2, y)
 
 instance MonadUnique ParseM where
     getUniqueSupplyM = ParseM $ \us -> case splitUniqSupply us of (us1, us2) -> (us1, [], us2)
@@ -98,10 +108,13 @@ runParseM us = uncurry (S.bindManyMixedLiftedness S.termFreeVars) . runParseM' u
 
 freshFloatId :: String -> (CoreExpr, S.Term) -> ParseM (Maybe (Var, S.Term), Var)
 freshFloatId _ (_, I (S.Var x)) = return (Nothing, x)
-freshFloatId n (old_e, e)       = fmap (\x -> let x' = x `setIdUnfolding` mkUnfolding InlineRhs False (isBottomingId x) old_e in (Just (x', e), x')) $ mkSysLocalM (mkFastString n) (S.termType e)
- -- NB: we are careful to give fresh binders an unfolding so that the evaluator can use
- -- GHC's inlining heuristics to decide whether it is profitable to inline the RHS
- -- FIXME: this doesn't work at all because substituting into binders zaps their (unstable) unfoldings
+freshFloatId n (old_e, e)       =
+    fmap (\x -> let x' = x `setIdUnfolding` mkUnfolding InlineRhs False (isBottomingId x) old_e in (Just (x', e), x')) $ mkSysLocalM (mkFastString n) (S.termType e)
+    -- NB: we are careful to give fresh binders an unfolding so that the
+    -- evaluator can use GHC's inlining heuristics to decide whether it is
+    -- profitable to inline the RHS.
+    -- FIXME: this doesn't work at all because substituting into binders zaps
+    -- their (unstable) unfoldings.
 
 freshFloatCoVar :: String -> S.Term -> ParseM (Maybe (Var, S.Term), Coercion)
 freshFloatCoVar _ (I (S.Value (S.Coercion co))) = return (Nothing, co)

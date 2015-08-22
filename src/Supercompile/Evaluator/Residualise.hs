@@ -1,6 +1,6 @@
 module Supercompile.Evaluator.Residualise (
     residualiseState, residualiseHeapBinding,
-    
+
     pPrintHeap,
 
     StatePrettiness(..), fullStatePrettiness, quietStatePrettiness,
@@ -20,8 +20,8 @@ import Var (isLocalId)
 
 import Data.Either
 import qualified Data.Map as M
-import qualified Data.Set as S
 import Data.Ord
+import qualified Data.Set as S
 
 
 class Symantics ann => Symantics' ann where

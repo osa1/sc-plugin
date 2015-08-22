@@ -1,8 +1,12 @@
+{-# LANGUAGE CPP, GeneralizedNewtypeDeriving, Rank2Types #-}
+
 module Supercompile.Drive.Match (
     MatchMode(..), InstanceMatching(..),
     match, match',
     Match, unMatch, matchWithReason, matchWithReason'
   ) where
+
+#include "GHCDefs.h"
 
 import Supercompile.Core.Renaming
 import Supercompile.Core.Syntax
@@ -15,13 +19,13 @@ import Supercompile.Utilities hiding (guard)
 
 import qualified CoreSyn as Core
 
-import Util
 import Coercion
-import Var        (TyVar, isTyVar, isId, tyVarKind, setVarType)
-import Id         (Id, idType, realIdUnfolding, idSpecialisation, zapFragileIdInfo)
-import IdInfo     (SpecInfo(..), emptySpecInfo)
+import Id (Id, idSpecialisation, idType, realIdUnfolding, zapFragileIdInfo)
+import IdInfo (SpecInfo (..), emptySpecInfo)
+import TypeRep (Kind, Type (..), isKindVar)
+import Util
+import Var (TyVar, isId, isTyVar, setVarType, tyVarKind)
 import VarEnv
-import TypeRep    (Kind, Type(..), isKindVar)
 
 import qualified Control.Monad
 import Control.Monad.Fix
@@ -55,13 +59,9 @@ traceSC _ = id
 
 
 newtype Match a = Match { unMatch :: Either String a }
---newtype Match a = Match { unMatch :: Maybe a }
-
-instance Functor Match where
-    fmap = liftM
+  deriving (Functor, Applicative)
 
 instance Monad Match where
-    return = Match . return
     mx >>= fxmy = Match $ unMatch mx >>= (unMatch . fxmy)
     fail s = Match $ Left s
     --fail s = Match $ fail s
@@ -88,7 +88,7 @@ matchRnEnv2 f x y = mkRnEnv2 (mkInScopeSet (f x `unionVarSet` f y))
 
 data MatchMode = MatchMode {
     matchInstanceMatching :: InstanceMatching,
-    matchCommonHeapVars :: InScopeSet
+    matchCommonHeapVars   :: InScopeSet
   }
 
 
@@ -188,7 +188,8 @@ matchCoercion rn2 (AppCo co1_l co2_l)      (AppCo co1_r co2_r)      = liftM2 (++
 matchCoercion rn2 (ForAllCo a_l co_l)      (ForAllCo a_r co_r)      = matchTyVarBndr rn2 a_l a_r $ \rn2 -> matchCoercion rn2 co_l co_r
 matchCoercion rn2 (CoVarCo a_l)            (CoVarCo a_r)            = matchVar rn2 a_l a_r
 matchCoercion rn2 (AxiomInstCo ax_l cos_l) (AxiomInstCo ax_r cos_r) = guard "matchCoercion: AxiomInstCo" (ax_l == ax_r) >> matchList (matchCoercion rn2) (cos_l) (cos_r)
-matchCoercion rn2 (UnsafeCo ty1_l ty2_l)   (UnsafeCo ty1_r ty2_r)   = liftM2 (++) (matchType rn2 (ty1_l) (ty1_r)) (matchType rn2 (ty2_l) (ty2_r))
+-- NOTE(osa1): Seems like this constructor is removed, commenting out.
+-- matchCoercion rn2 (UnsafeCo ty1_l ty2_l)   (UnsafeCo ty1_r ty2_r)   = liftM2 (++) (matchType rn2 (ty1_l) (ty1_r)) (matchType rn2 (ty2_l) (ty2_r))
 matchCoercion rn2 (SymCo co_l)             (SymCo co_r)             = matchCoercion rn2 (co_l) (co_r)
 matchCoercion rn2 (TransCo co1_l co2_l)    (TransCo co1_r co2_r)    = liftM2 (++) (matchCoercion rn2 (co1_l) (co1_r)) (matchCoercion rn2 (co2_l) (co2_r))
 matchCoercion rn2 (NthCo i_l co_l)         (NthCo i_r co_r)         = guard "matchCoercion: NthCo" (i_l == i_r) >> matchCoercion rn2 (co_l) (co_r)
@@ -477,7 +478,7 @@ matchPureHeap mm rn2 k_inst init_free_eqs h_l (Heap h_r ids_r)
     -- In the new world, we record staticness as phantom heap bindings, so this just doesn't figure in at all.
     -- We can account for staticness using the standard generalisation mechanism, and there is no need for the
     -- matcher to have hacks like that (though we still have to be careful about how we match phantoms).
-    
+
     matchLoop _     heap_inst xys [] _ _ = return (heap_inst, xys)
     matchLoop known (Heap h_inst ids_r) xys (lr:free_eqs) used_l used_r
        -- Perhaps we have already assumed this equality is true?
@@ -592,7 +593,7 @@ matchPureHeap mm rn2 k_inst init_free_eqs h_l (Heap h_r ids_r)
                   Nothing                    -> failLoop "cannot match VarR non-internally"
                 matchLoop (lr : known) heap_inst (extra_xys ++ xys) (bndr_free_eqs ++ extra_free_eqs ++ free_eqs) used_l' used_r'
             failLoop rest = fail $ "matchLoop: " ++ showPpr lr ++ ": " ++ rest
-    
+
     -- First Maybe: whether or not the var is bound in the heap
     -- Second Maybe: whether or not the HeapBinding actually has a term
     -- Third Maybe: whether it is safe for work duplication to make use of that term
@@ -626,14 +627,14 @@ matchPureHeap mm rn2 k_inst init_free_eqs h_l (Heap h_r ids_r)
           Left mb_tg                   -> return (Left mb_tg,               used_r,  emptyVarSet)
           Right (Just (used_r', e_r')) -> return (Right (renamedTerm e_r'), used_r', annedTermFreeVars e_r')
           Right Nothing                -> fail $ "instLoop(" ++ showPpr x_r ++ "): right side already used in instance match"
-        
+
         -- Transitively add the free variables of the copied bindings
         fvsInstLoop (M.insert x_r (HB how_r hb_meaning) h_inst) used_r (fvs_r `unionVarSet` varBndrFreeVars x_r)
 
     fvsInstLoop :: PureHeap -> VarSet -> FreeVars -> Match (PureHeap, VarSet)
     fvsInstLoop h_inst used_r fvs
       = foldM (\(h_inst, used_r) y_r -> case rnOccR_maybe rn2 y_r of
-                                          Just _ 
+                                          Just _
                                             | y_r `elemVarSet` k_inst_bvs -> return (h_inst, used_r) -- In the instantiating stack: no heap copying required
                                             | otherwise                   -> fail $ "fvsInstLoop(" ++ showPpr y_r ++ "): heap instance reference to non-instantiating stack"
                                           Nothing -> case lookupUsed used_r y_r h_r of -- Bound by the heap: must copy something

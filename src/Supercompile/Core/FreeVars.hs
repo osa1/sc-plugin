@@ -7,8 +7,9 @@ module Supercompile.Core.FreeVars (
   ) where
 
 import Supercompile.Core.Syntax
-
 import Supercompile.Utilities
+
+import Supercompilation.Show
 
 import Coercion (tyCoVarsOfCo)
 import CoreFVs
@@ -32,7 +33,7 @@ varBndrFreeVars x | isId x    = idBndrFreeVars x
 idBndrFreeVars :: Id -> FreeVars
 idBndrFreeVars x = varTypeTyVars x `unionVarSet` -- No global tyvars, so no problem
                    rulesFreeVars (specInfoRules (idSpecialisation x)) `unionVarSet`
-                   (stableUnfoldingVars (const True) (realIdUnfolding x) `orElse` emptyVarSet)
+                   (stableUnfoldingVars (realIdUnfolding x) `orElse` emptyVarSet)
   where
     rulesFreeVars :: [CoreRule] -> VarSet
     rulesFreeVars rules = foldr (unionVarSet . ruleFreeVars) emptyVarSet rules

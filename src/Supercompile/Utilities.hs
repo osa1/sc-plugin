@@ -44,7 +44,7 @@ import Data.List
 import qualified Data.Map as M
 import Data.Maybe
 import Data.Monoid (Monoid (mappend, mempty))
-import Data.Ord hiding (Down)
+import Data.Ord
 import qualified Data.Set as S
 import Data.Traversable (Traversable (traverse))
 import qualified Data.Traversable as Traversable
@@ -366,12 +366,6 @@ pPrint = ppr
 
 pPrintPrec :: Outputable a => Rational -> a -> SDoc
 pPrintPrec = pprPrec
-
-
-newtype Down a = Down { unDown :: a } deriving (Eq)
-
-instance Ord a => Ord (Down a) where
-    Down a `compare` Down b = b `compare` a
 
 
 fmapEither :: (a -> b) -> (c -> d) -> Either a c -> Either b d

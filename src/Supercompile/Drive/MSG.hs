@@ -1,3 +1,5 @@
+{-# LANGUAGE Rank2Types #-}
+
 module Supercompile.Drive.MSG (
     MSGMode(..), MSGResult, msg, msgMaybe,
 
@@ -13,30 +15,32 @@ import Supercompile.Evaluator.Syntax
 --import Supercompile.Evaluator.Residualise
 
 --import qualified Supercompile.GHC as GHC
-import Supercompile.Utilities hiding (guard)
 import Supercompile.StaticFlags
+import Supercompile.Utilities hiding (guard)
 
 import qualified CoreSyn as Core
 
-import Util
 import Coercion
-import CoreUtils  (hashCoercion, hashType {- , hashExpr -})
-import Name       (mkSystemVarName)
-import Var        (TyVar, mkTyVar, isTyVar, isId, varType, setVarType, tyVarKind, setTyVarKind, varName, idDetails, setIdDetails, idInfo, lazySetIdInfo {- , varUnique -})
-import Id         (Id, idType, idName, realIdUnfolding, setIdUnfolding, idSpecialisation, setIdSpecialisation, mkSysLocal, mkLocalId, isGlobalId)
-import IdInfo     (SpecInfo(..))
-import VarEnv
-import Pair       (Pair(..))
-import Type       (mkTyConApp, mkAppTy, splitAppTys, getTyVar_maybe, isKindTy)
+import CoreUtils (hashCoercion, hashType)
+import Id (Id, idName, idSpecialisation, idType, isGlobalId, mkLocalId,
+           mkSysLocal, realIdUnfolding, setIdSpecialisation, setIdUnfolding)
+import IdInfo (SpecInfo (..))
 import Kind
+import Name (mkSystemVarName)
+import Pair (Pair (..))
+import Type (getTyVar_maybe, isKindTy, mkAppTy, mkTyConApp, splitAppTys)
+import Util
+import Var (TyVar, idDetails, idInfo, isId, isTyVar, lazySetIdInfo, mkTyVar,
+            setIdDetails, setTyVarKind, setVarType, tyVarKind, varName, varType)
+import VarEnv
 --import TysWiredIn (pairTyCon {- , tupleCon -})
-import TysPrim    (funTyCon)
-import TypeRep    (Type(..))
-import Type       (coreView)
-import TrieMap    (TrieMap(..), CoercionMap, TypeMap)
-import Rules      (mkSpecInfo, roughTopNames)
-import Unique     (mkUniqueGrimily)
 import FastString (fsLit)
+import Rules (mkSpecInfo, roughTopNames)
+import TrieMap (CoercionMap, TrieMap (..), TypeMap)
+import Type (coreView)
+import TypeRep (Type (..))
+import TysPrim (funTyCon)
+import Unique (mkUniqueGrimily)
 --import BasicTypes (TupleSort(..))
 import qualified State
 
@@ -126,8 +130,8 @@ type MSG' = Either String
 -- Information on the context which we are currently in
 data MSGEnv = MSGEnv {
     msgLostWorkSharing :: Bool,
-    msgMode :: MSGMode,
-    msgTopRn2 :: RnEnv2
+    msgMode            :: MSGMode,
+    msgTopRn2          :: RnEnv2
   }
 
 msgLoseWorkSharing :: MSG a -> MSG a
@@ -480,7 +484,7 @@ msgFlexiVar rn2 x_l x_r = msgPend rn2 (zapVarExtraInfo x_r) (PendingVar x_l x_r)
 -- INVARIANT: neither incoming Type can refer to something bound rigidly (can't float out things that reference rigids)
 msgGeneraliseType :: RnEnv2 -> Type -> Type -> MSG TyVar
 msgGeneraliseType rn2 ty_l ty_r = msgPend rn2 a (PendingType ty_l ty_r)
-  where 
+  where
     -- Unbiased choice of base variable: only one side may be a variable, kind is MSGed at binding site
     -- NB: TyVars have no extra information, so there is nothing to zap!
     a = (getTyVar_maybe ty_l `mplus` getTyVar_maybe ty_r) `orElse` mkTyVar (mkSystemVarName uniq (fsLit "genty")) (typeKind ty_r)
@@ -837,7 +841,7 @@ msgCoerced _ _ _ _ _ _ = fail "msgCoerced"
 -- =/=
 --  [forall a. a/b]  b :: * |-> \lambda  [forall a. Int/b]
 --                   T b
--- =/= 
+-- =/=
 --  [T (forall a. a)/b]  b :: * |-> \lambda  [T (forall a. Int)/b]
 --                       b
 --
@@ -915,7 +919,7 @@ msgCoercion' rn2 (AppCo co1_l co2_l)      (AppCo co1_r co2_r)      = liftM2 mkAp
 msgCoercion' rn2 (ForAllCo a_l co_l)      (ForAllCo a_r co_r)      = msgTyVarBndr ForAllCo rn2 a_l a_r $ \rn2 -> msgCoercion rn2 co_l co_r
 msgCoercion' rn2 (CoVarCo a_l)            (CoVarCo a_r)            = liftM CoVarCo $ msgVar rn2 a_l a_r
 msgCoercion' rn2 (AxiomInstCo ax_l cos_l) (AxiomInstCo ax_r cos_r) = guard "msgCoercion: AxiomInstCo" (ax_l == ax_r) >> liftM (AxiomInstCo ax_r) (zipWithEqualM (msgCoercion rn2) cos_l cos_r)
-msgCoercion' rn2 (UnsafeCo ty1_l ty2_l)   (UnsafeCo ty1_r ty2_r)   = liftM2 UnsafeCo (msgType rn2 ty1_l ty1_r) (msgType rn2 ty2_l ty2_r)
+msgCoercion' rn2 (UnsafeCo ty1_l ty2_l)   (UnsafeCo ty1_r ty2_r)   = liftM2 mkUnsafeCo (msgType rn2 ty1_l ty1_r) (msgType rn2 ty2_l ty2_r)
 msgCoercion' rn2 (SymCo co_l)             (SymCo co_r)             = liftM SymCo $ msgCoercion rn2 co_l co_r
 msgCoercion' rn2 (TransCo co1_l co2_l)    (TransCo co1_r co2_r)    = liftM2 TransCo (msgCoercion rn2 co1_l co1_r) (msgCoercion rn2 co2_l co2_r)
 msgCoercion' rn2 (NthCo i_l co_l)         (NthCo i_r co_r)         = guard "msgCoercion: NthCo" (i_l == i_r) >> liftM (NthCo i_r) (msgCoercion rn2 co_l co_r)
@@ -1266,7 +1270,7 @@ mkTopRn2 ids_l ids_r = mkRnEnv2 (ids_l `unionInScope` ids_r)
 
 -- NB: we must enforce invariant that stuff "outside" cannot refer to stuff bound "inside" (heap *and* stack)
 msgLoop :: MSGMode -> (Heap, Heap) -> (Anned QA, Anned QA) -> (Stack, Stack)
-        -> MSG' (Pair (Heap, Renaming, Stack), (Heap, Stack, Anned QA)) 
+        -> MSG' (Pair (Heap, Renaming, Stack), (Heap, Stack, Anned QA))
 msgLoop mm (Heap init_h_l init_ids_l, Heap init_h_r init_ids_r) (qa_l, qa_r) (init_k_l, init_k_r)
   = flip fmap mb_res $ \(_, e) -> (liftA2 (\init_ids_lr msg_s_lr' -> (Heap (msgLRHeap msg_s_lr') init_ids_lr, msgLRRenaming msg_s_lr', msgLRStack msg_s_lr'))
                                           (Pair init_ids_l init_ids_r) (msgLR msg_s'),
@@ -1398,7 +1402,7 @@ msgLoop mm (Heap init_h_l init_ids_l, Heap init_h_r init_ids_r) (qa_l, qa_r) (in
           | Just (x_l, e_r) <- varTermPair e_l e_r
           , let (ids_r', x_r) = uniqAway' ids_r x_common
           = go rn_l rn_r used_l used_r init_h_l (M.insert x_r (internallyBound (renamedTerm e_r)) init_h_r) (Heap h_l ids_l) (Heap h_r ids_r') h (msg_s { msgPending = (x_common, PendingVar x_l x_r):rest })
-          
+
           | Just (x_r, e_l) <- varTermPair e_r e_l
           , let (ids_l', x_l) = uniqAway' ids_l x_common
           = go rn_l rn_r used_l used_r (M.insert x_l (internallyBound (renamedTerm e_l)) init_h_l) init_h_r (Heap h_l ids_l') (Heap h_r ids_r) h (msg_s { msgPending = (x_common, PendingVar x_l x_r):rest })

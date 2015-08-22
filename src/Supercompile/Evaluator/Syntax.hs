@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# OPTIONS_GHC -fno-warn-missing-signatures #-}
 module Supercompile.Evaluator.Syntax where
 
@@ -12,14 +13,14 @@ import Supercompile.Core.Tag
 import Supercompile.StaticFlags
 import Supercompile.Utilities
 
-import Id       (Id, idType, zapIdOccInfo)
-import PrimOp   (primOpType)
-import Type     (applyTy, applyTys, isUnLiftedType, splitTyConApp_maybe, mkTyVarTy)
-import Pair     (pSnd)
-import Coercion (coercionType, coercionKind, mkCoVarCo)
+import Coercion (coercionKind, coercionType, mkCoVarCo)
+import Id (Id, idType, zapIdOccInfo)
+import Pair (pSnd)
+import PrimOp (primOpType)
+import Type (applyTy, applyTys, isUnLiftedType, mkTyVarTy, splitTyConApp_maybe)
 
-import qualified Data.Map as M
 import qualified Data.Foldable as Foldable
+import qualified Data.Map as M
 import qualified Data.Traversable as Traversable
 
 

@@ -14,21 +14,22 @@ import Supercompile.Utilities
 
 import qualified Data.Map as M
 
+import BasicTypes
+import Coercion (coercionKind, isReflCo, liftCoSubstWith, mkInstCo, mkNthCo,
+                 mkUnsafeCo)
 import qualified CoreSyn as CoreSyn
 import CoreUnfold
-import DynFlags (DynFlag(..), defaultDynFlags, dopt_set)
-import Coercion (liftCoSubstWith, coercionKind, isReflCo, mkUnsafeCo)
-import TyCon
-import Type
-import PrelRules
+import DataCon
+import Demand (isBotRes, splitStrictSig)
+import DynFlags (DynFlag (..), defaultDynFlags, dopt_set)
 import Id
+import IdInfo (isShortableIdInfo)
 import Module
 import Name (nameModule_maybe)
-import IdInfo (isShortableIdInfo)
-import DataCon
 import Pair
-import BasicTypes
-import Demand (splitStrictSig, isBotRes)
+import PrelRules
+import TyCon
+import Type
 
 
 -- FIXME: this doesn't really work very well if the Answers are indirections, which is a common case!
@@ -73,10 +74,10 @@ evaluatePrim iss tg pop tys args = do
                    return (Uncast, (renamedValue (Data dc (univ_tys ++ ex_tys) cos xs)))
       where toType_maybe (CoreSyn.Type ty) = Just ty
             toType_maybe _                 = Nothing
-            
+
             toCoercion_maybe (CoreSyn.Coercion co) = Just co
             toCoercion_maybe _                     = Nothing
-            
+
             toVar_maybe (CoreSyn.Var x) = Just x
             toVar_maybe _               = Nothing
 
@@ -111,8 +112,8 @@ ghcHeuristics x e (lone_variable, arg_infos, cont_info)
       CoreSyn.CoreUnfolding { CoreSyn.uf_is_top = is_top, CoreSyn.uf_is_work_free = is_work_free, CoreSyn.uf_expandable = expandable
                             , CoreSyn.uf_arity = arity, CoreSyn.uf_guidance = guidance }
                                -> trce_fail (ppr (CoreSyn.uf_tmpl unf)) $
-                                  Just $ tryUnfolding dflags1 x lone_variable 
-                                                      arg_infos cont_info is_top 
+                                  Just $ tryUnfolding dflags1 x lone_variable
+                                                      arg_infos cont_info is_top
                                                       is_work_free expandable
                                                       arity guidance
       -- GHC actually only looks through DFunUnfoldings in exprIsConApp_maybe,
@@ -244,7 +245,7 @@ step' normalising ei_state = {-# SCC "step'" #-}
                                           (annedToTagged anned_cast_a)
                                           (if dUPLICATE_VALUES_EVALUATOR then in_e else (mkIdentityRenaming (unitVarSet x'), fmap Var $ annedVar tg x'))
           Nothing -> do
-            -- NB: we MUST NOT create update frames for non-concrete bindings!! This has bitten me in the past, and it is seriously confusing. 
+            -- NB: we MUST NOT create update frames for non-concrete bindings!! This has bitten me in the past, and it is seriously confusing.
             guard (howBound hb == InternallyBound)
             -- Avoid creating consecutive update frames: implements "stack squeezing" to maintain stack invariants
             -- NB: suprisingly this is not broken, even if there are cycles in the heap:
@@ -445,7 +446,7 @@ step' normalising ei_state = {-# SCC "step'" #-}
           , case mb_co_kind of Nothing -> True; Just (_, _, Pair from_ty' to_ty') -> from_ty' `eqType` to_ty' -- NB: should never see refl here!
           , (deeds2, alt_e):_ <- [(deeds1 `releaseDeeds` annedAltsSize rest, (rn_alts, alt_e)) | ((LiteralAlt alt_l, alt_e), rest) <- bagContexts alts, alt_l == l]
           = Just (deeds2, Heap h1 ids, k, alt_e)
-          
+
            -- Data is a big stinking mess! I hate you, KPush rule.
           | Data dc tys cos xs <- v
            -- a) Ensure that the coercion on the data (if any) lets us do the reduction, and determine
@@ -462,7 +463,7 @@ step' normalising ei_state = {-# SCC "step'" #-}
                                             dc_univ_tyvars = dataConUnivTyVars dc
                                             dc_ex_tyvars   = dataConExTyVars dc
                                             arg_tys        = dataConRepArgTys dc
-                                        
+
                                             -- Make the "theta" from Fig 3 of the paper
                                             (_univ_tys, ex_tys) = splitAt tc_arity tys
                                             gammas = decomposeCo tc_arity co'
@@ -491,11 +492,11 @@ step' normalising ei_state = {-# SCC "step'" #-}
                                                              return (deeds3, h', ids', (rn_alts', alt_e))]
                                            ]
           = Just (deeds3, Heap h' ids', k, alt_e)
-          
+
            -- Thank god, default alternatives are trivial:
           | (deeds2, alt_e):_ <- [(deeds1 `releaseDeeds` annedAltsSize rest, (rn_alts, alt_e)) | ((DefaultAlt, alt_e), rest) <- bagContexts alts]
           = Just (deeds2, Heap h1 ids, k, alt_e)
-          
+
            -- This can legitimately occur, e.g. when supercompiling (if x then (case x of False -> 1) else 2)
           | otherwise
           = Nothing
@@ -592,7 +593,7 @@ shouldExposeUnfolding x = case inl_inline inl_prag of
     NoInline
       | isNeverActive (inl_act inl_prag)   -> Left "unconditional NONLINE"
       | only_if_superinlinable             -> Left "conditional NOINLINE, not SUPERINLINABLE"
-    EmptyInlineSpec 
+    EmptyInlineSpec
       | only_if_superinlinable             -> Left "not SUPERINLINABLE"
     _                                      -> Right False
   where inl_prag = idInlinePragma x
@@ -639,7 +640,7 @@ gc _state@(deeds0, Heap h ids, k, in_e)
     gced_state -- We do not insist that *no* variables are uncovered because when used from the speculator this may not be true
   where
     gced_state = (deeds2, Heap h' ids, k', in_e)
-    
+
     -- We have to use stateAllFreeVars here rather than stateFreeVars because in order to safely prune the live stack we need
     -- variables bound by k to be part of the live set if they occur within in_e or the rest of the k
     live0 = stateAllFreeVars (deeds0, Heap M.empty ids, k, in_e)
@@ -648,12 +649,12 @@ gc _state@(deeds0, Heap h ids, k, in_e)
     (deeds2, k') | False     = pruneLiveStack deeds1 k live1
                  | otherwise = (deeds1, k) -- FIXME: turned this off for now because it means that the resulting term might not be normalised (!!!)
                                            -- NB: if you change this check out checkShouldExposeUnfolding as well
-    
+
     inlineLiveHeap :: Deeds -> PureHeap -> FreeVars -> (Deeds, PureHeap, FreeVars)
     inlineLiveHeap deeds h live = (foldr (flip releaseHeapBindingDeeds . snd) deeds h_dead_kvs, h_live, live')
       where
         (h_dead_kvs, h_live, live') = heap_worker (M.toAscList h) M.empty live
-        
+
         -- This is just like Split.transitiveInline, but simpler since it never has to worry about running out of deeds:
         heap_worker :: [(Var, HeapBinding)]   -- Possibly-dead heap as sorted list. NB: not a PureHeap map because creating..
                     -> PureHeap -> FreeVars   -- ..the map on every iteration showed up as 6% of SC allocations!
@@ -663,15 +664,15 @@ gc _state@(deeds0, Heap h ids, k, in_e)
           = if live == live'
             then (h_pending', h_output', live')
             else heap_worker h_pending' h_output' live'
-          where 
+          where
             (h_pending', h_output', live') = foldr consider_inlining ([], h_output, live) h_pending
-        
+
             -- NB: It's important that type variables become live after inlining a binding, or we won't
             -- necessarily lambda-abstract over all the free type variables of a h-function
             consider_inlining (x', hb) (h_pending_kvs, h_output, live)
               | x' `elemVarSet` live = (h_pending_kvs,            M.insert x' hb h_output, live `unionVarSet` heapBindingFreeVars hb `unionVarSet` varBndrFreeVars x')
               | otherwise            = ((x', hb) : h_pending_kvs, h_output,                live)
-    
+
     -- NB: doing this is cool yet also dangerous at the same time. What if we have:
     --  {-# NOINLINE foo #-}
     --  foo = \x -> e
