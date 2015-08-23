@@ -1,6 +1,8 @@
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE BangPatterns, CPP #-}
 
 module Supercompile.Evaluator.Evaluate (normalise, step, gc, shouldExposeUnfolding) where
+
+#include "GHCDefs.h"
 
 import Supercompile.Evaluator.Deeds
 import Supercompile.Evaluator.FreeVars
@@ -14,23 +16,29 @@ import Supercompile.GHC (termToCoreExpr)
 import Supercompile.StaticFlags
 import Supercompile.Utilities
 
+import Supercompilation.Show (dynFlags)
+
 import qualified Data.Map as M
+import Data.Maybe (isJust)
 
 import BasicTypes
 import Coercion (coercionKind, isReflCo, liftCoSubstWith, mkInstCo, mkNthCo,
                  mkUnsafeCo)
 import qualified CoreSyn as CoreSyn
 import CoreUnfold
+import CoreUnfold
 import DataCon
 import Demand (isBotRes, splitStrictSig)
-import DynFlags (DynFlags (..), defaultDynFlags, dopt_set)
+import DynFlags
 import Id
+import IdInfo
 import Module
 import Name (nameModule_maybe)
 import Pair
 import PrelRules
 import TyCon
 import Type
+import Util
 
 
 -- FIXME: this doesn't really work very well if the Answers are indirections, which is a common case!
@@ -39,10 +47,14 @@ import Type
 evaluatePrim :: InScopeSet -> Tag -> PrimOp -> [Type] -> [Coerced Answer] -> Maybe (Anned (Coerced Answer))
 evaluatePrim iss tg pop tys args = do
     args' <- fmap (map CoreSyn.Type tys ++) $ mapM to args
-    (res:_) <- return [res | CoreSyn.BuiltinRule { CoreSyn.ru_nargs = nargs, CoreSyn.ru_try = f }
-                          <- primOpRules pop (error "evaluatePrim: dummy primop name")
-                      , nargs == length args
-                      , Just res <- [f (const CoreSyn.NoUnfolding) args']]
+    res <- case primOpRules (error "evaluatePrim: dummy primop name") pop of
+             Just (CoreSyn.BuiltinRule { CoreSyn.ru_nargs = nargs, CoreSyn.ru_try = f })
+               | nargs == length args
+               , Just res <- f dynFlags (emptyInScopeSet, const CoreSyn.NoUnfolding)
+                                        (error "id needed" {- I don't know how Id is used here, and it seems like most rules don't need it -})
+                                        args'
+               -> return res
+             _ -> Nothing
     fmap (annedCoercedAnswer tg) $ fro res
   where
     to :: Coerced Answer -> Maybe CoreSyn.CoreExpr
@@ -64,9 +76,14 @@ evaluatePrim iss tg pop tys args = do
     fro (CoreSyn.Cast e co)   = fmap (\(mb_co', in_v) -> (castBy (maybe co (\co' -> mkTransCo iss co' co) (castByCo mb_co')) tg, in_v)) $ fro e
     fro (CoreSyn.Lit l)       = Just (Uncast, (emptyRenaming, Literal l))
     fro (CoreSyn.Coercion co) = Just (Uncast, (mkIdentityRenaming (tyCoVarsOfCo co), Coercion co))
-    fro e = do (dc, univ_tys, e_args0) <- exprIsConApp_maybe (const CoreSyn.NoUnfolding) e
+    fro e = do (dc, univ_tys, e_args0) <- exprIsConApp_maybe (emptyInScopeSet, const CoreSyn.NoUnfolding) e
                case newTyConCo_maybe (dataConTyCon dc) of
-                 Just co_axiom -> let [e_arg0] = e_args0 in fro (e_arg0 `CoreSyn.Cast` mkAxInstCo co_axiom univ_tys)
+                 Just co_axiom ->
+                   let [e_arg0] = e_args0
+                    in
+                     -- NOTE(osa1): Added Nominal and 0 here, I think that's how
+                     -- it works for newtypes but I'm not sure.
+                     fro (e_arg0 `CoreSyn.Cast` mkAxInstCo Nominal co_axiom 0 univ_tys)
                  Nothing -> do
                    let (ex_tys, e_args1) = takeWhileJust toType_maybe     e_args0
                        (cos,    e_args2) = takeWhileJust toCoercion_maybe e_args1
@@ -91,8 +108,8 @@ summariseContext h k = trainCarFoldr go (True, [], BoringCtxt) k
           CoApply _         -> (False, TrivArg         : arg_infos, ValAppCtxt)
           Apply x'          -> (False, summariseArg x' : arg_infos, ValAppCtxt)
           Scrutinise _ _ _  -> (True,                           [], CaseCtxt)
-          PrimApply _ _ _ _ -> (True,                           [], ArgCtxt False)
-          StrictLet _ _     -> (True,                           [], ArgCtxt False)
+          PrimApply _ _ _ _ -> (True,                           [], RuleArgCtxt)
+          StrictLet _ _     -> (True,                           [], RuleArgCtxt)
           Update _          -> (True,                           [], BoringCtxt)
           CastIt _          -> (lone_variable,           arg_infos, cont_info)
 
@@ -113,8 +130,8 @@ ghcHeuristics x e (lone_variable, arg_infos, cont_info)
       CoreSyn.CoreUnfolding { CoreSyn.uf_is_top = is_top, CoreSyn.uf_is_work_free = is_work_free, CoreSyn.uf_expandable = expandable
                             , CoreSyn.uf_guidance = guidance }
                                -> trce_fail (ppr (CoreSyn.uf_tmpl unf)) $
-                                  Just $ tryUnfolding dflags1 x lone_variable
-                                                      arg_infos cont_info is_top
+                                  Just $ isJust $ tryUnfolding dflags1 x lone_variable
+                                                      arg_infos cont_info (CoreSyn.uf_tmpl unf) is_top
                                                       is_work_free expandable
                                                       guidance
       -- GHC actually only looks through DFunUnfoldings in exprIsConApp_maybe,
@@ -134,13 +151,13 @@ ghcHeuristics x e (lone_variable, arg_infos, cont_info)
     trce_fail _   mb_x         = mb_x
 
     trce :: SDoc -> a -> a
-    trce | tRACE     = pprTrace ("Considering inlining: " ++ showSDoc (ppr x))
+    trce | tRACE     = pprTrace ("Considering inlining: " ++ showSDoc dynFlags (ppr x))
          | otherwise = flip const
 
     -- NB: I'm not particularly happy that I may have to make up a whole new unfolding at ever
     -- occurrence site, but GHC makes it hard to do otherwise because any binding with a non-stable
     -- Unfolding pinned to it gets the Unfolding zapped by GHC's renamer
-    answer_unf = mkUnfolding CoreSyn.InlineRhs False False (termToCoreExpr (annedTermToTerm e))
+    answer_unf = mkUnfolding dynFlags CoreSyn.InlineRhs False False (termToCoreExpr (annedTermToTerm e))
 
 -- | Non-expansive simplification we can do everywhere safely
 --
@@ -225,7 +242,7 @@ step' normalising ei_state = {-# SCC "step'" #-}
       --
       -- The supercompiled size of Bernouilli decreased from 19193 to 16173 with this change.
       -- FIXME: do this another way? (with freevars)
-      | Just (ds, res_d) <- fmap splitStrictSig $ idStrictness_maybe x'
+      | (ds, res_d) <- splitStrictSig $ idStrictness x'
       , isBotRes res_d
       , Just (h_extra, k) <- trimUnreachable (length ds) (idType x') k
       = Just (deeds, Heap (h `M.union` h_extra) ids, k, fmap (\(Var x') -> Question x') (annedTerm tg (Var x'))) -- Kind of a hacky way to get an Anned Question!
@@ -400,9 +417,8 @@ step' normalising ei_state = {-# SCC "step'" #-}
           checkLambdaish $
             let deeds1 = deeds0 `releaseDeeds` 1 -- Release deed associated with the lambda (but not its body)
                 (deeds2, k') = case mb_co of Uncast            -> (deeds1, k)
-                                             CastBy co' _tg_co -> appendCast deeds1 ids tg_a (co' `mk_inst` ty') k
+                                             CastBy co' _tg_co -> appendCast deeds1 ids tg_a (mkInstCo co' ty') k
             in (deeds2, heap, k', (insertTypeSubst rn x ty', e_body))
-          where mk_inst = mkInstCo ids
 
         coApply :: Deeds -> Out Coercion -> Maybe State
         coApply deeds0 apply_co' = do
@@ -588,9 +604,9 @@ shouldExposeUnfolding x = case inl_inline inl_prag of
     --
     -- Our philosophy: if it is *ever* inlinable (in any phase), expose it
     Inline                                 -> Right True -- Don't check for size increase at all if marked INLINE
-    Inlinable super
-      | only_if_superinlinable, not super  -> Left "INLINEABLE but not SUPERINLINABLE"
-      | otherwise                          -> Right super
+    Inlinable                              ->
+        Right True -- TODO(osa1): Inlineable no longer has an argument,
+                   -- returning True here.
     NoInline
       | isNeverActive (inl_act inl_prag)   -> Left "unconditional NONLINE"
       | only_if_superinlinable             -> Left "conditional NOINLINE, not SUPERINLINABLE"
@@ -692,7 +708,7 @@ gc _state@(deeds0, Heap h ids, k, in_e)
     -- TODO: perhaps this same check should be applied in the Update frame compressor, though that would destroy some stack invariants
     pruneLiveStack :: Deeds -> Stack -> FreeVars -> (Deeds, Stack)
     pruneLiveStack init_deeds k live =
-      trainFoldr (\kf (deeds, k_live) -> if (case tagee kf of Update x' | hasShortableIdInfo (idInfo x') -> x' `elemVarSet` live; _ -> True)
+      trainFoldr (\kf (deeds, k_live) -> if (case tagee kf of Update x' | hasShortableIdInfo x' -> x' `elemVarSet` live; _ -> True)
                                          then (deeds, kf `Car` k_live)
                                          else (deeds `releaseStackFrameDeeds` kf, k_live))
                  (\gen deeds -> (deeds, Loco gen)) init_deeds k
@@ -705,6 +721,6 @@ hasShortableIdInfo :: Id -> Bool
 hasShortableIdInfo id
   =  isEmptySpecInfo (specInfo info)
   && isDefaultInlinePragma (inlinePragInfo info)
-  && not (isStableUnfolding (unfoldingInfo info))
+  && not (CoreSyn.isStableUnfolding (unfoldingInfo info))
   where
      info = idInfo id
