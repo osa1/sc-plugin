@@ -32,6 +32,7 @@ import Supercompile.Utilities
 
 import Supercompilation.Show (dynFlags)
 
+import CoAxiom
 import Coercion (Coercion, isCoVar, isCoVarType, mkAxInstCo, mkCoVarCo)
 import CoreSyn
 import CoreUnfold
@@ -45,6 +46,7 @@ import PrimOp (primOpSig)
 import TyCon (newTyConCo_maybe)
 import Type (isUnLiftedType)
 import Var (isTyVar)
+import VarEnv (emptyInScopeSet)
 
 import Control.Monad
 
@@ -153,7 +155,7 @@ conAppToTerm :: DataCon -> [CoreExpr] -> ParseM S.Term
 conAppToTerm dc es
   | Just co_axiom <- newTyConCo_maybe (dataConTyCon dc)
   , let [co_val_e] = co_val_es -- NB: newtypes may not have existential arguments
-  = fmap (`S.cast` mkAxInstCo co_axiom tys') $ coreExprToTerm co_val_e
+  = fmap (`S.cast` mkAxInstCo Nominal co_axiom 0 tys') $ coreExprToTerm co_val_e
   | otherwise
   = do -- Put each argument into a form suitable for an explicit value
        -- NB: if any argument is non-trivial then the resulting binding will not be a simple value
@@ -175,10 +177,11 @@ conAppToTerm dc es
 coreExprToTerm :: CoreExpr -> ParseM S.Term
 coreExprToTerm init_e = {-# SCC "coreExprToTerm" #-} term init_e
   where
-    -- Partially-applied PrimOp and Data are dealt with later on by generating appropriate unfoldings
-    -- We use exprIsConApp_maybe here to ensure we desugar explicit constructor use into something that looks cheap,
-    -- and we do our own thing to spot saturated primop applications
-    term e | Just (dc, univ_tys, es) <- exprIsConApp_maybe (const NoUnfolding) e
+    -- Partially-applied PrimOp and Data are dealt with later on by generating
+    -- appropriate unfoldings We use exprIsConApp_maybe here to ensure we
+    -- desugar explicit constructor use into something that looks cheap, and we
+    -- do our own thing to spot saturated primop applications
+    term e | Just (dc, univ_tys, es) <- exprIsConApp_maybe (emptyInScopeSet, const NoUnfolding) e
            = conAppToTerm dc (map Type univ_tys ++ es)
            | (Var x, es) <- collectArgs e
            , Just pop <- isPrimOpId_maybe x

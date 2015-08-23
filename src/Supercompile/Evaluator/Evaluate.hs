@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+
 module Supercompile.Evaluator.Evaluate (normalise, step, gc, shouldExposeUnfolding) where
 
 import Supercompile.Evaluator.Deeds
@@ -21,9 +23,8 @@ import qualified CoreSyn as CoreSyn
 import CoreUnfold
 import DataCon
 import Demand (isBotRes, splitStrictSig)
-import DynFlags (DynFlag (..), defaultDynFlags, dopt_set)
+import DynFlags (DynFlags (..), defaultDynFlags, dopt_set)
 import Id
-import IdInfo (isShortableIdInfo)
 import Module
 import Name (nameModule_maybe)
 import Pair
@@ -110,12 +111,12 @@ ghcHeuristics x e (lone_variable, arg_infos, cont_info)
   where
     try unf = case unf of
       CoreSyn.CoreUnfolding { CoreSyn.uf_is_top = is_top, CoreSyn.uf_is_work_free = is_work_free, CoreSyn.uf_expandable = expandable
-                            , CoreSyn.uf_arity = arity, CoreSyn.uf_guidance = guidance }
+                            , CoreSyn.uf_guidance = guidance }
                                -> trce_fail (ppr (CoreSyn.uf_tmpl unf)) $
                                   Just $ tryUnfolding dflags1 x lone_variable
                                                       arg_infos cont_info is_top
                                                       is_work_free expandable
-                                                      arity guidance
+                                                      guidance
       -- GHC actually only looks through DFunUnfoldings in exprIsConApp_maybe,
       -- so I'll do this rough heuristic instead:
       CoreSyn.DFunUnfolding {} -> trce_fail (text "Unsaturated dictionary unfolding") $
@@ -555,7 +556,7 @@ step' normalising ei_state = {-# SCC "step'" #-}
 -- A possible solution is to mark all those Ids syntactically contained within a SUPERINLINABLE
 -- unfolding as SUPERINLINABLE if they are not explicitly INLINE/NOINLINE. We can do this when
 -- we construct the unfoldings in the first place.
-shouldExposeUnfolding :: Id -> Either String Superinlinable
+shouldExposeUnfolding :: Id -> Either String Bool
 shouldExposeUnfolding x = case inl_inline inl_prag of
     -- FIXME: God help my soul
     _ | Just mod <- nameModule_maybe (idName x)
@@ -690,7 +691,20 @@ gc _state@(deeds0, Heap h ids, k, in_e)
     --
     -- TODO: perhaps this same check should be applied in the Update frame compressor, though that would destroy some stack invariants
     pruneLiveStack :: Deeds -> Stack -> FreeVars -> (Deeds, Stack)
-    pruneLiveStack init_deeds k live = trainFoldr (\kf (deeds, k_live) -> if (case tagee kf of Update x' | isShortableIdInfo (idInfo x') -> x' `elemVarSet` live; _ -> True)
-                                                                          then (deeds, kf `Car` k_live)
-                                                                          else (deeds `releaseStackFrameDeeds` kf, k_live))
-                                                  (\gen deeds -> (deeds, Loco gen)) init_deeds k
+    pruneLiveStack init_deeds k live =
+      trainFoldr (\kf (deeds, k_live) -> if (case tagee kf of Update x' | hasShortableIdInfo (idInfo x') -> x' `elemVarSet` live; _ -> True)
+                                         then (deeds, kf `Car` k_live)
+                                         else (deeds `releaseStackFrameDeeds` kf, k_live))
+                 (\gen deeds -> (deeds, Loco gen)) init_deeds k
+
+-----------------
+hasShortableIdInfo :: Id -> Bool
+-- True if there is no user-attached IdInfo on exported_id,
+-- so we can safely discard it
+-- See Note [Messing up the exported Id's IdInfo]
+hasShortableIdInfo id
+  =  isEmptySpecInfo (specInfo info)
+  && isDefaultInlinePragma (inlinePragInfo info)
+  && not (isStableUnfolding (unfoldingInfo info))
+  where
+     info = idInfo id
